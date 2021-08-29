@@ -40,22 +40,22 @@
 /* #undef HAVE_FSEEKO */
 
 /* Define to 1 if fseeko64 (and presumably ftello64) exists and is declared. */
-#define HAVE_FSEEKO64 1
+/* #undef HAVE_FSEEKO64 */
 
 /* Define to 1 if _fseeki64 (and presumably _ftelli64) exists and is declared. */
-/* #undef HAVE__FSEEKI64 */
+#define HAVE__FSEEKI64 1
 
 /* Define to 1 if fstat64 exists and is declared. */
-#define HAVE_FSTAT64 1
+/* #undef HAVE_FSTAT64 */
 
 /* Define to 1 if _fstati64 exists and is declared. */
-/* #undef HAVE__FSTATI64 */
+#define HAVE__FSTATI64 1
 
 /* Define to 1 if fileno exists and is declared (Posix). */
 #define HAVE_FILENO 1
 
 /* Define to 1 if _fileno exists and is declared (ISO C++). */
-/* #undef HAVE__FILENO */
+#define HAVE__FILENO 1
 
 /* Name of package */
 #define PACKAGE "librsync"
@@ -70,7 +70,7 @@
 #define SIZEOF_SIZE_T 8
 
 /* The size of `off_t', as computed by sizeof. */
-#define SIZEOF_OFF_T 8
+#define SIZEOF_OFF_T 4
 
 /* The size of `off64_t', as computed by sizeof. */
 /* #undef SIZEOF_OFF64_T */
@@ -85,7 +85,7 @@
 #define SIZEOF_UNSIGNED_SHORT 2
 
 /* Define to 1 if printf supports the size_t "%zu" length field. */
-#define HAVE_PRINTF_Z 1
+/* #undef HAVE_PRINTF_Z */
 
 /* FIXME Enable extensions on AIX 3, Interix.  */
 #ifndef _ALL_SOURCE
@@ -121,24 +121,21 @@
 # define _DARWIN_USE_64_BIT_INODE 1
 #endif
 
-    /* FIXME Number of bits in a file offset, on hosts where this is settable.
-     */
-    /* #undef _FILE_OFFSET_BITS */
+/* FIXME Number of bits in a file offset, on hosts where this is settable. */
+/* #undef _FILE_OFFSET_BITS */
 
-    /* FIXME Define to 1 to make fseeko visible on some hosts (e.g. glibc 2.2).
-     */
-    /* #undef _LARGEFILE_SOURCE */
+/* FIXME Define to 1 to make fseeko visible on some hosts (e.g. glibc 2.2). */
+/* #undef _LARGEFILE_SOURCE */
 
-    /* FIXME Define for large files, on AIX-style hosts. */
-    /* #undef _LARGE_FILES */
+/* FIXME Define for large files, on AIX-style hosts. */
+/* #undef _LARGE_FILES */
 
-    /* FIXME Define to 1 if on MINIX. */
-    /* #undef _MINIX */
+/* FIXME Define to 1 if on MINIX. */
+/* #undef _MINIX */
 
-    /* FIXME Define to 2 if the system does not provide POSIX.1 features except
-       with this defined. */
-    /* #undef _POSIX_1_SOURCE */
+/* FIXME Define to 2 if the system does not provide POSIX.1 features except with
+   this defined. */
+/* #undef _POSIX_1_SOURCE */
 
-    /* FIXME Define to 1 if you need to in order for `stat' and other things to
-       work. */
-    /* #undef _POSIX_SOURCE */
+/* FIXME Define to 1 if you need to in order for `stat' and other things to work. */
+/* #undef _POSIX_SOURCE */
