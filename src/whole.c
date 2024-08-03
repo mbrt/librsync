@@ -27,9 +27,7 @@
                                |        -- Alan Perlis
                                */
 
-#include "config.h"
-#include <assert.h>
-#include <stdlib.h>
+#include "config.h"             /* IWYU pragma: keep */
 #include <stdio.h>
 #include <string.h>
 #include "librsync.h"
@@ -37,25 +35,11 @@
 #include "sumset.h"
 #include "job.h"
 #include "buf.h"
+#include "librsync_export.h"
 
 /** Whole file IO buffer sizes. */
 LIBRSYNC_EXPORT int rs_inbuflen = 0, rs_outbuflen = 0;
 
-/** Run a job continuously, with input to/from the two specified files.
- *
- * The job should already be set up, and must be freed by the caller after
- * return. If rs_inbuflen or rs_outbuflen are set, they will override the
- * inbuflen and outbuflen arguments.
- *
- * \param in_file - input file, or NULL if there is no input.
- *
- * \param out_file - output file, or NULL if there is no output.
- *
- * \param inbuflen - recommended input buffer size to use.
- *
- * \param outbuflen - recommended output buffer size to use.
- *
- * \return RS_DONE if the job completed, or otherwise an error result. */
 rs_result rs_whole_run(rs_job_t *job, FILE *in_file, FILE *out_file,
                        int inbuflen, int outbuflen)
 {
@@ -80,17 +64,22 @@ rs_result rs_whole_run(rs_job_t *job, FILE *in_file, FILE *out_file,
     return result;
 }
 
-rs_result rs_sig_file(FILE *old_file, FILE *sig_file, size_t new_block_len,
+rs_result rs_sig_file(FILE *old_file, FILE *sig_file, size_t block_len,
                       size_t strong_len, rs_magic_number sig_magic,
                       rs_stats_t *stats)
 {
     rs_job_t *job;
     rs_result r;
+    rs_long_t old_fsize = rs_file_size(old_file);
 
-    job = rs_sig_begin(new_block_len, strong_len, sig_magic);
+    if ((r =
+         rs_sig_args(old_fsize, &sig_magic, &block_len,
+                     &strong_len)) != RS_DONE)
+        return r;
+    job = rs_sig_begin(block_len, strong_len, sig_magic);
     /* Size inbuf for 4 blocks, outbuf for header + 4 blocksums. */
-    r = rs_whole_run(job, old_file, sig_file, 4 * new_block_len,
-                     12 + 4 * (4 + strong_len));
+    r = rs_whole_run(job, old_file, sig_file, 4 * (int)block_len,
+                     12 + 4 * (4 + (int)strong_len));
     if (stats)
         memcpy(stats, &job->stats, sizeof *stats);
     rs_job_free(job);
@@ -123,9 +112,9 @@ rs_result rs_delta_file(rs_signature_t *sig, FILE *new_file, FILE *delta_file,
     rs_result r;
 
     job = rs_delta_begin(sig);
-    /* Size inbuf for 1 block, outbuf for literal cmd + 4 blocks. */
-    r = rs_whole_run(job, new_file, delta_file, sig->block_len,
-                     10 + 4 * sig->block_len);
+    /* Size inbuf for 4*(CMD + 1 block), outbuf for 4*CMD. */
+    r = rs_whole_run(job, new_file, delta_file,
+                     4 * (MAX_DELTA_CMD + sig->block_len), 4 * MAX_DELTA_CMD);
     if (stats)
         memcpy(stats, &job->stats, sizeof *stats);
     rs_job_free(job);
@@ -139,8 +128,9 @@ rs_result rs_patch_file(FILE *basis_file, FILE *delta_file, FILE *new_file,
     rs_result r;
 
     job = rs_patch_begin(rs_file_copy_cb, basis_file);
-    /* Default size inbuf and outbuf 64K. */
-    r = rs_whole_run(job, delta_file, new_file, 64 * 1024, 64 * 1024);
+    /* Default size inbuf 1*CMD and outbuf 4*CMD. */
+    r = rs_whole_run(job, delta_file, new_file, MAX_DELTA_CMD,
+                     4 * MAX_DELTA_CMD);
     if (stats)
         memcpy(stats, &job->stats, sizeof *stats);
     rs_job_free(job);

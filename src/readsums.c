@@ -23,13 +23,11 @@
 /** \file readsums.c
  * Load signatures from a file. */
 
-#include "config.h"
-#include <assert.h>
-#include <stdlib.h>
+#include "config.h"             /* IWYU pragma: keep */
 #include "librsync.h"
 #include "job.h"
 #include "sumset.h"
-#include "stream.h"
+#include "scoop.h"
 #include "netint.h"
 #include "trace.h"
 #include "util.h"

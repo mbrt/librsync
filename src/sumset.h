@@ -20,9 +20,16 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#include <assert.h>
-#include "hashtable.h"
-#include "checksum.h"
+/** \file sumset.h
+ * The rs_signature class implementation of a file signature. */
+#ifndef SUMSET_H
+#  define SUMSET_H
+
+#  include <assert.h>
+#  include <stddef.h>
+#  include "hashtable.h"
+#  include "checksum.h"
+#  include "librsync.h"
 
 /** Signature of a single block. */
 typedef struct rs_block_sig {
@@ -43,27 +50,28 @@ struct rs_signature {
     void *block_sigs;           /**< The packed block_sigs for all blocks. */
     hashtable_t *hashtable;     /**< The hashtable for finding matches. */
     /* The is extra stats not included in the hashtable stats. */
-#ifndef HASHTABLE_NSTATS
+#  ifndef HASHTABLE_NSTATS
     long calc_strong_count;     /**< The count of strongsum calcs done. */
-#endif
+#  endif
 };
 
 /** Initialize an rs_signature instance.
  *
  * \param *sig the signature to initialize.
  *
- * \param magic the signature magic value. Must be set to a valid magic value.
+ * \param magic - the magic type to use (0 for "recommended").
  *
- * \param block_len the block size to use. Must be > 0.
+ * \param block_len - the block length to use (0 for "recommended").
  *
- * \param strong_len the strongsum size to use. Must be <= the max strongsum
- * size for the strongsum type indicated by the magic value. Use 0 to use the
- * recommended size for the provided magic value.
+ * \param strong_len - the strongsum length to use (0 for "maximum", -1 for
+ * "minimum"). Must be <= the max strongsum size for the strongsum type
+ * indicated by the magic value.
  *
- * \param sig_fsize signature file size to preallocate required storage for.
- * Use 0 if size is unknown. */
-rs_result rs_signature_init(rs_signature_t *sig, int magic, int block_len,
-                            int strong_len, rs_long_t sig_fsize);
+ * \param sig_fsize - the signature file size (-1 for "unknown"). Used to
+ * preallocate required storage. */
+rs_result rs_signature_init(rs_signature_t *sig, rs_magic_number magic,
+                            size_t block_len, size_t strong_len,
+                            rs_long_t sig_fsize);
 
 /** Destroy an rs_signature instance. */
 void rs_signature_done(rs_signature_t *sig);
@@ -77,20 +85,27 @@ rs_block_sig_t *rs_signature_add_block(rs_signature_t *sig,
 rs_long_t rs_signature_find_match(rs_signature_t *sig, rs_weak_sum_t weak_sum,
                                   void const *buf, size_t len);
 
+/** Assert that rs_sig_args() args for rs_signature_init() are valid.
+ *
+ * We don't use a static inline function here so that assert failure output
+ * points at where rs_sig_args_check() was called from. */
+#  define rs_sig_args_check(magic, block_len, strong_len) do {\
+    assert(((magic) & ~0xff) == (RS_MD4_SIG_MAGIC & ~0xff));\
+    assert(((magic) & 0xf0) == 0x30 || ((magic) & 0xf0) == 0x40);\
+    assert((((magic) & 0x0f) == 0x06 &&\
+	    (int)(strong_len) <= RS_MD4_SUM_LENGTH) ||\
+	   (((magic) & 0x0f) == 0x07 &&\
+	    (int)(strong_len) <= RS_BLAKE2_SUM_LENGTH));\
+    assert(0 < (block_len));\
+    assert(0 < (strong_len) && (strong_len) <= RS_MAX_STRONG_SUM_LENGTH);\
+} while (0)
+
 /** Assert that a signature is valid.
  *
  * We don't use a static inline function here so that assert failure output
  * points at where rs_signature_check() was called from. */
-#define rs_signature_check(sig) do {\
-    assert(((sig)->magic & 0xffffff00) == (RS_MD4_SIG_MAGIC & 0xffffff00));\
-    assert(((sig)->magic & 0xf0) == 0x30 || ((sig)->magic & 0xf0) == 0x40);\
-    assert((((sig)->magic & 0x0f) == 0x07 &&\
-	    (sig)->strong_sum_len <= RS_BLAKE2_SUM_LENGTH) ||\
-	   (((sig)->magic & 0x0f) == 0x06 &&\
-	    (sig)->strong_sum_len <= RS_MD4_SUM_LENGTH));\
-    assert(0 < (sig)->block_len);\
-    assert(0 < (sig)->strong_sum_len &&\
-	   (sig)->strong_sum_len <= RS_MAX_STRONG_SUM_LENGTH);\
+#  define rs_signature_check(sig) do {\
+    rs_sig_args_check((sig)->magic, (sig)->block_len, (sig)->strong_sum_len);\
     assert(0 <= (sig)->count && (sig)->count <= (sig)->size);\
     assert(!(sig)->hashtable || (sig)->hashtable->count <= (sig)->count);\
 } while (0)
@@ -124,3 +139,5 @@ static inline void rs_signature_calc_strong_sum(rs_signature_t const *sig,
 {
     rs_calc_strong_sum(rs_signature_strongsum_kind(sig), buf, len, sum);
 }
+
+#endif                          /* !SUMSET_H */

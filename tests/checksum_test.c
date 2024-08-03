@@ -21,11 +21,11 @@
 
 /* Force DEBUG on so that tests can use assert(). */
 #undef NDEBUG
-#include <stdio.h>
-#include <stdint.h>
 #include <assert.h>
 #include <string.h>
 #include "checksum.h"
+#include "hashtable.h"
+#include "librsync.h"
 
 /* Test driver for rollsum. */
 int main(int argc, char **argv)
@@ -35,7 +35,7 @@ int main(int argc, char **argv)
 
     /* Initialize buf for use by tests. */
     for (int i = 0; i < 256; i++)
-        buf[i] = i;
+        buf[i] = (unsigned char)i;
 
     /* RS_ROLLSUM weaksum tests. */
 

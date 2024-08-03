@@ -18,9 +18,9 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include "config.h"             /* IWYU pragma: keep */
 #include "isprefix.h"
 
-/** Return true if TIP is a prefix of ICEBERG. */
 int isprefix(char const *tip, char const *iceberg)
 {
     while (*tip) {

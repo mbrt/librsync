@@ -25,6 +25,7 @@ html
 latex
 Testing
 *.user
+.cmake
 
 # CMake generated Doxygen files
 CMakeDoxyfile.in
@@ -42,6 +43,11 @@ CMakeDoxygenDefaults.cmake
 *_test
 *_test.exe
 *_test.exe.manifest
+
+# Performance benchmark binaries
+*_perf
+*_perf.exe
+*_perf.exe.manifest
 
 *.bak
 

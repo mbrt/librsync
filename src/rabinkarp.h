@@ -18,8 +18,11 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
-#ifndef _RABINKARP_H_
-#  define _RABINKARP_H_
+
+/** \file rabinkarp.h
+ * The rabinkarp class implementation of the RabinKarp rollsum. */
+#ifndef RABINKARP_H
+#  define RABINKARP_H
 
 #  include <stddef.h>
 #  include <stdint.h>
@@ -35,39 +38,26 @@
  * This multiplier has a bit pattern of 1's getting sparser with significance,
  * is the product of 2 large primes, and matches the characterstics for a good
  * LCG multiplier. */
-#  define RABINKARP_MULT 0x08104225
+#  define RABINKARP_MULT 0x08104225U
 
 /** The RabinKarp inverse multiplier.
  *
  * This is the inverse of RABINKARP_MULT modular 2^32. Multiplying by this is
  * equivalent to dividing by RABINKARP_MULT. */
-#  define RABINKARP_INVM 0x98f009ad
+#  define RABINKARP_INVM 0x98f009adU
 
 /** The RabinKarp seed adjustment.
  *
  * This is a factor used to adjust for the seed when rolling out values. It's
  * equal to; (RABINKARP_MULT - 1) * RABINKARP_SEED */
-#  define RABINKARP_ADJ 0x08104224
+#  define RABINKARP_ADJ 0x08104224U
 
 /** The rabinkarp_t state type. */
-typedef struct _rabinkarp {
+typedef struct rabinkarp {
     size_t count;               /**< Count of bytes included in sum. */
     uint32_t hash;              /**< The accumulated hash value. */
     uint32_t mult;              /**< The value of RABINKARP_MULT^count. */
 } rabinkarp_t;
-
-static inline uint32_t uint32_pow(uint32_t m, size_t p)
-{
-    uint32_t ans = 1;
-    while (p) {
-        if (p & 1) {
-            ans *= m;
-        }
-        m *= m;
-        p >>= 1;
-    }
-    return ans;
-}
 
 static inline void rabinkarp_init(rabinkarp_t *sum)
 {
@@ -76,15 +66,7 @@ static inline void rabinkarp_init(rabinkarp_t *sum)
     sum->mult = 1;
 }
 
-static inline void rabinkarp_update(rabinkarp_t *sum, const unsigned char *buf,
-                                    size_t len)
-{
-    for (size_t i = len; i; i--) {
-        sum->hash = sum->hash * RABINKARP_MULT + *buf++;
-    }
-    sum->count += len;
-    sum->mult *= uint32_pow(RABINKARP_MULT, len);
-}
+void rabinkarp_update(rabinkarp_t *sum, const unsigned char *buf, size_t len);
 
 static inline void rabinkarp_rotate(rabinkarp_t *sum, unsigned char out,
                                     unsigned char in)
@@ -112,4 +94,4 @@ static inline uint32_t rabinkarp_digest(rabinkarp_t *sum)
     return sum->hash;
 }
 
-#endif                          /* _RABINKARP_H_ */
+#endif                          /* !RABINKARP_H */
