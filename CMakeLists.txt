@@ -164,6 +164,7 @@ message (STATUS "CMAKE_SYSTEM = ${CMAKE_SYSTEM}")
 
 # Find POPT
 find_package(POPT)
+message (STATUS "POPT Found = ${POPT_FOUND}")
 if (POPT_FOUND)
   message (STATUS "POPT_INCLUDE_DIRS  = ${POPT_INCLUDE_DIRS}")
   message (STATUS "POPT_LIBRARIES = ${POPT_LIBRARIES}")
@@ -319,6 +320,7 @@ if (WIN32)
 endif (WIN32)
 
 # Disable rdiff specific tests
+message(STATUS "Build rdiff ${BUILD_RDIFF}")
 if (BUILD_RDIFF)
     add_test(NAME rdiff_bad_option
         COMMAND ${WIN_BASH} rdiff_bad_option.test $<TARGET_FILE:rdiff>
