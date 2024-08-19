@@ -19,31 +19,21 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-/** \file emit.c
- * encoding output routines.
- *
- * \todo Pluggable encoding formats: gdiff-style, rsync 24, ed (text), Delta
- * HTTP. */
-
-#include "config.h"
+#include "config.h"             /* IWYU pragma: keep */
 #include <assert.h>
-#include <stdlib.h>
 #include "librsync.h"
 #include "emit.h"
 #include "job.h"
 #include "netint.h"
-#include "command.h"
 #include "prototab.h"
 #include "trace.h"
 
-/** Write the magic for the start of a delta. */
 void rs_emit_delta_header(rs_job_t *job)
 {
     rs_trace("emit DELTA magic");
     rs_squirt_n4(job, RS_DELTA_MAGIC);
 }
 
-/** Write a LITERAL command. */
 void rs_emit_literal_cmd(rs_job_t *job, int len)
 {
     int cmd;
@@ -64,7 +54,7 @@ void rs_emit_literal_cmd(rs_job_t *job, int len)
         rs_trace("emit LITERAL_N4(len=%d), cmd_byte=%#04x", len, cmd);
     }
 
-    rs_squirt_byte(job, cmd);
+    rs_squirt_byte(job, (rs_byte_t)cmd);
     if (param_len)
         rs_squirt_netint(job, len, param_len);
 
@@ -73,10 +63,6 @@ void rs_emit_literal_cmd(rs_job_t *job, int len)
     job->stats.lit_cmdbytes += 1 + param_len;
 }
 
-/** Write a COPY command for given offset and length.
- *
- * There is a choice of variable-length encodings, depending on the size of
- * representation for the parameters. */
 void rs_emit_copy_cmd(rs_job_t *job, rs_long_t where, rs_long_t len)
 {
     int cmd;
@@ -95,7 +81,6 @@ void rs_emit_copy_cmd(rs_job_t *job, rs_long_t where, rs_long_t len)
         assert(where_bytes == 1);
         cmd = RS_OP_COPY_N1_N1;
     }
-
     if (len_bytes == 1) ;
     else if (len_bytes == 2)
         cmd += 1;
@@ -108,22 +93,19 @@ void rs_emit_copy_cmd(rs_job_t *job, rs_long_t where, rs_long_t len)
 
     rs_trace("emit COPY_N%d_N%d(where=" FMT_LONG ", len=" FMT_LONG
              "), cmd_byte=%#04x", where_bytes, len_bytes, where, len, cmd);
-    rs_squirt_byte(job, cmd);
+    rs_squirt_byte(job, (rs_byte_t)cmd);
     rs_squirt_netint(job, where, where_bytes);
     rs_squirt_netint(job, len, len_bytes);
 
     stats->copy_cmds++;
     stats->copy_bytes += len;
     stats->copy_cmdbytes += 1 + where_bytes + len_bytes;
-
-    /* \todo All the stats */
 }
 
-/** Write an END command. */
 void rs_emit_end_cmd(rs_job_t *job)
 {
     int cmd = RS_OP_END;
 
     rs_trace("emit END, cmd_byte=%#04x", cmd);
-    rs_squirt_byte(job, cmd);
+    rs_squirt_byte(job, (rs_byte_t)cmd);
 }

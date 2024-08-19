@@ -25,21 +25,13 @@
                                | sheltering.
                                */
 
-/** \file job.c
- * Generic state-machine interface.
- *
- * The point of this is that we need to be able to suspend and resume
- * processing at any point at which the buffers may block.
- *
- * \sa \ref api_streaming \sa rs_job_iter() \sa ::rs_job */
-
-#include "config.h"
+#include "config.h"             /* IWYU pragma: keep */
 #include <assert.h>
 #include <stdlib.h>
 #include <time.h>
 #include "librsync.h"
 #include "job.h"
-#include "stream.h"
+#include "scoop.h"
 #include "trace.h"
 #include "util.h"
 
@@ -142,11 +134,6 @@ static rs_result rs_job_work(rs_job_t *job, rs_buffers_t *buffers)
 const rs_stats_t *rs_job_statistics(rs_job_t *job)
 {
     return &job->stats;
-}
-
-int rs_job_input_is_ending(rs_job_t *job)
-{
-    return job->stream->eof_in;
 }
 
 rs_result rs_job_drive(rs_job_t *job, rs_buffers_t *buf, rs_driven_cb in_cb,

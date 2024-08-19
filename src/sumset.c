@@ -20,8 +20,7 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#include "config.h"
-#include <assert.h>
+#include "config.h"             /* IWYU pragma: keep */
 #include <stdlib.h>
 #include <string.h>
 #include "librsync.h"
@@ -34,7 +33,7 @@ static void rs_block_sig_init(rs_block_sig_t *sig, rs_weak_sum_t weak_sum,
 {
     sig->weak_sum = weak_sum;
     if (strong_sum)
-        memcpy(sig->strong_sum, strong_sum, strong_len);
+        memcpy(sig->strong_sum, strong_sum, (size_t)strong_len);
 }
 
 static inline unsigned rs_block_sig_hash(const rs_block_sig_t *sig)
@@ -74,7 +73,7 @@ static inline int rs_block_match_cmp(rs_block_match_t *match,
         match->buf = NULL;
     }
     return memcmp(&match->block_sig.strong_sum, &block_sig->strong_sum,
-                  match->signature->strong_sum_len);
+                  (size_t)match->signature->strong_sum_len);
 }
 
 /* Disable mix32() in the hashtable because RabinKarp doesn't need it. We
@@ -89,13 +88,10 @@ static inline int rs_block_match_cmp(rs_block_match_t *match,
 /* Get the size of a packed rs_block_sig_t. */
 static inline size_t rs_block_sig_size(const rs_signature_t *sig)
 {
-    /* Round up to next multiple of sizeof(weak_sum) to align memory correctly.
-     */
-    return offsetof(rs_block_sig_t,
-                    strong_sum) + ((sig->strong_sum_len +
-                                    sizeof(rs_weak_sum_t)-
-                                    1) / sizeof(rs_weak_sum_t)) *
-        sizeof(rs_weak_sum_t);
+    /* Round up to multiple of sizeof(weak_sum) to align memory correctly. */
+    const size_t mask = sizeof(rs_weak_sum_t)- 1;
+    return (offsetof(rs_block_sig_t, strong_sum) +
+            (((size_t)sig->strong_sum_len + mask) & ~mask));
 }
 
 /* Get the pointer to the block_sig_t from a block index. */
@@ -110,18 +106,22 @@ static inline rs_block_sig_t *rs_block_sig_ptr(const rs_signature_t *sig,
 static inline int rs_block_sig_idx(const rs_signature_t *sig,
                                    rs_block_sig_t *block_sig)
 {
-    return ((char *)block_sig -
-            (char *)sig->block_sigs) / rs_block_sig_size(sig);
+    return (int)(((char *)block_sig -
+                  (char *)sig->block_sigs) / rs_block_sig_size(sig));
 }
 
-rs_result rs_signature_init(rs_signature_t *sig, int magic, int block_len,
-                            int strong_len, rs_long_t sig_fsize)
+rs_result rs_sig_args(rs_long_t old_fsize, rs_magic_number * magic,
+                      size_t *block_len, size_t *strong_len)
 {
-    int max_strong_len;
+    size_t rec_block_len;       /* the recomended block_len for the given
+                                   old_fsize. */
+    size_t min_strong_len;      /* the minimum strong_len for the given
+                                   old_fsize and block_len. */
+    size_t max_strong_len;      /* the maximum strong_len for the given magic. */
 
     /* Check and set default arguments. */
-    magic = magic ? magic : RS_RK_BLAKE2_SIG_MAGIC;
-    switch (magic) {
+    *magic = *magic ? *magic : RS_RK_BLAKE2_SIG_MAGIC;
+    switch (*magic) {
     case RS_BLAKE2_SIG_MAGIC:
     case RS_RK_BLAKE2_SIG_MAGIC:
         max_strong_len = RS_BLAKE2_SUM_LENGTH;
@@ -131,18 +131,68 @@ rs_result rs_signature_init(rs_signature_t *sig, int magic, int block_len,
         max_strong_len = RS_MD4_SUM_LENGTH;
         break;
     default:
-        rs_error("invalid magic %#x", magic);
+        rs_error("invalid magic %#x", *magic);
         return RS_BAD_MAGIC;
     }
-    strong_len = strong_len ? strong_len : max_strong_len;
-    if (strong_len < 1 || max_strong_len < strong_len) {
-        rs_error("invalid strong_sum_len %d for magic %#x", strong_len, magic);
+    /* The recommended block_len is sqrt(old_fsize) with a 256 min size rounded
+       down to a multiple of the 128 byte blake2b blocksize to give a
+       reasonable compromise between signature size, delta size, and
+       performance. If the old_fsize is unknown, we use the default. */
+    if (old_fsize < 0) {
+        rec_block_len = RS_DEFAULT_BLOCK_LEN;
+    } else {
+        rec_block_len =
+            old_fsize <= 256 * 256 ? 256 : rs_long_sqrt(old_fsize) & ~127;
+    }
+    if (*block_len == 0)
+        *block_len = rec_block_len;
+    /* The recommended strong_len assumes the worst case new_fsize = old_fsize
+       + 16MB with no matches. This results in comparing a block at every byte
+       offset against all the blocks in the signature, or new_fsize*block_num
+       comparisons. With N bits in the blocksig, there is a 1/2^N chance per
+       comparison of a hash colision. So with 2^N attempts there would be a
+       fair chance of having a collision. So we want to round up to the next
+       byte, add an extra 2 bytes (16 bits) in the strongsum, and assume the
+       weaksum is worth another 16 bits, for at least 32 bits extra, giving a
+       worst case 1/2^32 chance of having a hash collision per delta. If
+       old_fsize is unknown we use a conservative default. */
+    if (old_fsize < 0) {
+        min_strong_len = RS_DEFAULT_MIN_STRONG_LEN;
+    } else {
+        min_strong_len =
+            2 + (rs_long_ln2(old_fsize + ((rs_long_t)1 << 24)) +
+                 rs_long_ln2(old_fsize / *block_len + 1) + 7) / 8;
+    }
+    if (*strong_len == 0)
+        *strong_len = max_strong_len;
+    else if (*strong_len == -1)
+        *strong_len = min_strong_len;
+    else if (old_fsize >= 0 && *strong_len < min_strong_len) {
+        rs_warn("strong_len=" FMT_SIZE " smaller than recommended minimum "
+                FMT_SIZE " for old_fsize=" FMT_LONG " with block_len=" FMT_SIZE,
+                *strong_len, min_strong_len, old_fsize, *block_len);
+    } else if (*strong_len > max_strong_len) {
+        rs_error("invalid strong_len=" FMT_SIZE " for magic=%#x", *strong_len,
+                 (int)*magic);
         return RS_PARAM_ERROR;
     }
+    rs_sig_args_check(*magic, *block_len, *strong_len);
+    return RS_DONE;
+}
+
+rs_result rs_signature_init(rs_signature_t *sig, rs_magic_number magic,
+                            size_t block_len, size_t strong_len,
+                            rs_long_t sig_fsize)
+{
+    rs_result result;
+
+    /* Check and set default arguments, using old_fsize=-1 for unknown. */
+    if ((result = rs_sig_args(-1, &magic, &block_len, &strong_len)) != RS_DONE)
+        return result;
     /* Set attributes from args. */
     sig->magic = magic;
-    sig->block_len = block_len;
-    sig->strong_sum_len = strong_len;
+    sig->block_len = (int)block_len;
+    sig->strong_sum_len = (int)strong_len;
     sig->count = 0;
     /* Calculate the number of blocks if we have the signature file size. */
     /* Magic+header is 12 bytes, each block thereafter is 4 bytes
@@ -212,11 +262,12 @@ void rs_signature_log_stats(rs_signature_t const *sig)
            "match statistics: signature[%ld searches, %ld (%.3f%%) matches, "
            "%ld (%.3fx) weak sum compares, %ld (%.3f%%) strong sum compares, "
            "%ld (%.3f%%) strong sum calcs]", t->find_count, t->match_count,
-           100.0 * (double)t->match_count / t->find_count, t->hashcmp_count,
-           (double)t->hashcmp_count / t->find_count, t->entrycmp_count,
-           100.0 * (double)t->entrycmp_count / t->find_count,
+           100.0 * (double)t->match_count / (double)t->find_count,
+           t->hashcmp_count, (double)t->hashcmp_count / (double)t->find_count,
+           t->entrycmp_count,
+           100.0 * (double)t->entrycmp_count / (double)t->find_count,
            sig->calc_strong_count,
-           100.0 * (double)sig->calc_strong_count / t->find_count);
+           100.0 * (double)sig->calc_strong_count / (double)t->find_count);
 #endif
 }
 

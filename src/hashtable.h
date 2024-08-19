@@ -17,11 +17,6 @@
  * You should have received a copy of the GNU Lesser General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. */
-#ifndef _HASHTABLE_H_
-#  define _HASHTABLE_H_
-
-#  include <assert.h>
-#  include <stdlib.h>
 
 /** \file hashtable.h
  * A generic open addressing hashtable.
@@ -41,7 +36,8 @@
  * particular entries by more than just their key. There is an iterator for
  * iterating through all entries in the hashtable. There are optional
  * NAME_find() find/match/hashcmp/entrycmp stats counters that can be disabled
- * by defining HASHTABLE_NSTATS.
+ * by defining HASHTABLE_NSTATS. There is an optional simple k=1 bloom filter
+ * for speed that can be disabled by defining HASHTABLE_NBLOOM.
  *
  * The types and methods of the hashtable and its contents are specified by
  * using \#define parameters set to their basenames (the prefixes for the *_t
@@ -60,8 +56,8 @@
  *
  * Example: \code
  *   typedef ... mykey_t;
- *   int mykey_hash(const mykey_t *e);
- *   int mykey_cmp(mykey_t *e, const mykey_t *o);
+ *   int mykey_hash(mykey_t const *e);
+ *   int mykey_cmp(mykey_t *e, mykey_t const *o);
  *
  *   typedef struct myentry {
  *     mykey_t key;  // Inherit from mykey_t.
@@ -103,7 +99,7 @@
  *     mykey_t key;  // Inherit from mykey_t;
  *     ...extra match criteria and state data...
  *   } mymatch_t;
- *   int mymatch_cmp(mymatch_t *m, const myentry_t *e);
+ *   int mymatch_cmp(mymatch_t *m, myentry_t const *e);
  *
  *   #define ENTRY myentry
  *   #define KEY mykey
@@ -123,17 +119,28 @@
  * can mutate the mymatch_t object for doing things like deferred and cached
  * evaluation of expensive match data. It can also access the whole myentry_t
  * object to match against more than just the key. */
+#ifndef HASHTABLE_H
+#  define HASHTABLE_H
+
+#  include <stdbool.h>
 
 /** The hashtable type. */
 typedef struct hashtable {
     int size;                   /**< Size of allocated hashtable. */
     int count;                  /**< Number of entries in hashtable. */
+    unsigned tmask;             /**< Mask to get the hashtable index. */
+#  ifndef HASHTABLE_NBLOOM
+    unsigned bshift;            /**< Shift to get the bloomfilter index. */
+#  endif
 #  ifndef HASHTABLE_NSTATS
     /* The following are for accumulating NAME_find() stats. */
     long find_count;            /**< The count of finds tried. */
     long match_count;           /**< The count of matches found. */
     long hashcmp_count;         /**< The count of hash compares done. */
     long entrycmp_count;        /**< The count of entry compares done. */
+#  endif
+#  ifndef HASHTABLE_NBLOOM
+    unsigned char *kbloom;      /**< Bloom filter of hash keys with k=1. */
 #  endif
     void **etable;              /**< Table of pointers to entries. */
     unsigned ktable[];          /**< Table of hash keys. */
@@ -143,8 +150,24 @@ typedef struct hashtable {
 hashtable_t *_hashtable_new(int size);
 void _hashtable_free(hashtable_t *t);
 
+#  ifndef HASHTABLE_NBLOOM
+static inline void hashtable_setbloom(hashtable_t *t, unsigned const h)
+{
+    /* Use upper bits for a "different hash". */
+    unsigned const i = h >> t->bshift;
+    t->kbloom[i / 8] |= (unsigned char)(1 << (i % 8));
+}
+
+static inline bool hashtable_getbloom(hashtable_t *t, unsigned const h)
+{
+    /* Use upper bits for a "different hash". */
+    unsigned const i = h >> t->bshift;
+    return (t->kbloom[i / 8] >> (i % 8)) & 1;
+}
+#  endif
+
 /** MurmurHash3 finalization mix function. */
-static inline unsigned mix32(unsigned int h)
+static inline unsigned mix32(unsigned h)
 {
     h ^= h >> 16;
     h *= 0x85ebca6b;
@@ -154,10 +177,19 @@ static inline unsigned mix32(unsigned int h)
     return h;
 }
 
-#endif                          /* _HASHTABLE_H_ */
+/** Ensure hash's are never zero. */
+static inline unsigned nozero(unsigned h)
+{
+    return h ? h : (unsigned)-1;
+}
+
+#endif                          /* !HASHTABLE_H */
 
 /* If ENTRY is defined, define type-dependent static inline methods. */
 #ifdef ENTRY
+
+#  include <assert.h>
+#  include <stddef.h>
 
 #  define _JOIN2(x, y) x##y
 #  define _JOIN(x, y) _JOIN2(x, y)
@@ -188,21 +220,20 @@ static inline unsigned mix32(unsigned int h)
 #  define NAME_iter _JOIN(NAME, _iter)
 #  define NAME_next _JOIN(NAME, _next)
 
-/* Modified hash() with/without mix32(). */
+/* Modified hash() with/without mix32() and reserving zero for empty buckets. */
 #  ifdef HASHTABLE_NMIX32
-#    define _KEY_HASH(k) KEY_hash((KEY_t *)k)
+#    define _KEY_HASH(k) nozero(KEY_hash((KEY_t *)k))
 #  else
-#    define _KEY_HASH(k) mix32(KEY_hash((KEY_t *)k))
+#    define _KEY_HASH(k) nozero(mix32(KEY_hash((KEY_t *)k)))
 #  endif
 
-/* Loop macro for probing table t for key k, setting hk to the hash for k
-   reserving zero for empty buckets, and iterating with index i and entry hash
-   h, terminating at an empty bucket. */
-#  define _for_probe(t, k, hk, i, h) \
-    const unsigned mask = t->size - 1;\
-    unsigned hk = _KEY_HASH(k), i, s, h;\
-    if (hk == 0) hk = -1;\
-    for (i = hk & mask, s = 0; (h = t->ktable[i]); i = (i + ++s) & mask)
+/* Loop macro for probing table t for key hash hk, iterating with index i and
+   entry hash h, terminating at an empty bucket. */
+#  define _for_probe(t, hk, i, h) \
+    unsigned const *const ktable = t->ktable;\
+    unsigned const tmask = t->tmask;\
+    unsigned i, s, h;\
+    for (i = hk & tmask, s = 0; (h = ktable[i]); i = (i + ++s) & tmask)
 
 /* Conditional macro for incrementing stats counters. */
 #  ifndef HASHTABLE_NSTATS
@@ -264,10 +295,15 @@ static inline void NAME_stats_init(hashtable_t *t)
  * \return The added entry, or NULL if the table is full. */
 static inline ENTRY_t *NAME_add(hashtable_t *t, ENTRY_t *e)
 {
+    unsigned he = _KEY_HASH(e);
+
     assert(e != NULL);
     if (t->count + 1 == t->size)
         return NULL;
-    _for_probe(t, e, he, i, h);
+#  ifndef HASHTABLE_NBLOOM
+    hashtable_setbloom(t, he);
+#  endif
+    _for_probe(t, he, i, h);
     t->count++;
     t->ktable[i] = he;
     return t->etable[i] = e;
@@ -286,10 +322,15 @@ static inline ENTRY_t *NAME_add(hashtable_t *t, ENTRY_t *e)
 static inline ENTRY_t *NAME_find(hashtable_t *t, MATCH_t *m)
 {
     assert(m != NULL);
+    unsigned hm = _KEY_HASH(m);
     ENTRY_t *e;
 
     _stats_inc(t->find_count);
-    _for_probe(t, m, hm, i, he) {
+#  ifndef HASHTABLE_NBLOOM
+    if (!hashtable_getbloom(t, hm))
+        return NULL;
+#  endif
+    _for_probe(t, hm, i, he) {
         _stats_inc(t->hashcmp_count);
         if (hm == he) {
             _stats_inc(t->entrycmp_count);
@@ -299,6 +340,8 @@ static inline ENTRY_t *NAME_find(hashtable_t *t, MATCH_t *m)
             }
         }
     }
+    /* Also count the compare for the empty bucket. */
+    _stats_inc(t->hashcmp_count);
     return NULL;
 }
 

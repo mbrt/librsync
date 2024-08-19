@@ -29,8 +29,8 @@
 
 /** \file librsync.h
  * Public header for librsync. */
-#ifndef _RSYNC_H
-#  define _RSYNC_H
+#ifndef LIBRSYNC_H
+#  define LIBRSYNC_H
 
 #  include <stdio.h>
 #  include <stdint.h>
@@ -43,7 +43,7 @@ extern "C" {
 
 /** Library version string.
  *
- * \sa \ref versioning */
+ * \sa \ref page_versioning */
 LIBRSYNC_EXPORT extern char const rs_librsync_version[];
 
 typedef uint8_t rs_byte_t;
@@ -312,11 +312,17 @@ LIBRSYNC_EXPORT void rs_sumset_dump(rs_signature_t const *);
  * entry, and suitable to be passed in on a second call, but they don't
  * directly tell you how much output data was produced.
  *
- * Note also that if *#avail_in is nonzero on return, then not all of the input
- * data has been consumed. The caller should either provide more output buffer
- * space and call ::rs_job_iter() again passing the same #next_in and
- * #avail_in, or put the remaining input data into some persistent buffer and
- * call rs_job_iter() with it again when there is more output space.
+ * If the input buffer was large enough, it will be processed directly,
+ * otherwise the data can be copied and accumulated into an internal buffer for
+ * processing. This means using larger buffers can be much more efficient.
+ *
+ * Note also that if #avail_in is nonzero on return, then not all of the input
+ * data has been consumed. This can happen either because it ran out of output
+ * buffer space, or because it processed as much data as possible directly from
+ * the input buffer and needs more input to proceed without copying into
+ * internal buffers. The caller should provide more output buffer space and/or
+ * pack the remaining input data into another buffer with more input before
+ * calling rs_job_iter() again.
  *
  * \sa rs_job_iter() */
 struct rs_buffers_s {
@@ -354,8 +360,17 @@ struct rs_buffers_s {
 /** \sa ::rs_buffers_s */
 typedef struct rs_buffers_s rs_buffers_t;
 
-/** Default block length, if not determined by any other factors. */
+/** Default block length, if not determined by any other factors.
+ *
+ * The 2K default assumes a typical file is about 4MB and should be OK for
+ * files up to 32G with more than 1GB ram. */
 #  define RS_DEFAULT_BLOCK_LEN 2048
+
+/** Default minimum strong sum length, if the filesize is unknown.
+ *
+ * This is conservative, and should be safe for files less than 45TB with a 2KB
+ * block_len, assuming no collision attack with crafted data. */
+#  define RS_DEFAULT_MIN_STRONG_LEN 12
 
 /** Job of work to be done.
  *
@@ -402,23 +417,53 @@ LIBRSYNC_EXPORT const rs_stats_t *rs_job_statistics(rs_job_t *job);
 /** Deallocate job state. */
 LIBRSYNC_EXPORT rs_result rs_job_free(rs_job_t *);
 
+/** Get or check signature arguments for a given file size.
+ *
+ * This can be used to get the recommended arguments for generating a
+ * signature. On calling, old_fsize should be set to the old file size or -1
+ * for "unknown". The magic and block_len arguments should be set to a valid
+ * value or 0 for "recommended". The strong_len input should be set to a valid
+ * value, 0 for "maximum", or -1 for "miniumum". Use strong_len=0 for the best
+ * protection against active hash collision attacks for the given magic type.
+ * Use strong_len=-1 for the smallest signature size that is safe against
+ * random hash collisions for the block_len and old_fsize. Use strong_len=20
+ * for something probably good enough against attacks with smaller signatures.
+ * On return the 0 or -1 input args will be set to recommended values and the
+ * returned result will indicate if any inputs were invalid.
+ *
+ * \param old_fsize - the original file size (-1 for "unknown").
+ *
+ * \param *magic - the magic type to use (0 for "recommended").
+ *
+ * \param *block_len - the block length to use (0 for "recommended").
+ *
+ * \param *strong_len - the strongsum length to use (0 for "maximum", -1 for
+ * "minimum").
+ *
+ * \return RS_DONE if all arguments are valid, otherwise an error code. */
+LIBRSYNC_EXPORT rs_result rs_sig_args(rs_long_t old_fsize,
+                                      rs_magic_number * magic,
+                                      size_t *block_len, size_t *strong_len);
+
 /** Start generating a signature.
+ *
+ * It's recommended you use rs_sig_args() to get the recommended arguments for
+ * this based on the original file size.
  *
  * \return A new rs_job_t into which the old file data can be passed.
  *
- * \param sig_magic Indicates the version of signature file format to generate.
+ * \param sig_magic Signature file format to generate (0 for "recommended").
  * See ::rs_magic_number.
  *
- * \param new_block_len Size of checksum blocks. Larger values make the
- * signature shorter, and the delta longer.
+ * \param block_len Checksum block size to use (0 for "recommended"). Larger
+ * values make the signature shorter, and the delta longer.
  *
- * \param strong_sum_len If non-zero, truncate the strong signatures to this
- * many bytes, to make the signature shorter. It's recommended you leave this
- * at zero to get the full strength.
+ * \param strong_len Strongsum length in bytes to use (0 for "maximum", -1 for
+ * "minimum"). Smaller values make the signature shorter but increase the risk
+ * of corruption from hash collisions.
  *
  * \sa rs_sig_file() */
-LIBRSYNC_EXPORT rs_job_t *rs_sig_begin(size_t new_block_len,
-                                       size_t strong_sum_len,
+LIBRSYNC_EXPORT rs_job_t *rs_sig_begin(size_t block_len, size_t strong_len,
                                        rs_magic_number sig_magic);
 
 /** Prepare to compute a streaming delta.
@@ -442,6 +487,9 @@ LIBRSYNC_EXPORT rs_job_t *rs_loadsig_begin(rs_signature_t **);
 LIBRSYNC_EXPORT rs_result rs_build_hash_table(rs_signature_t *sums);
 
 /** Callback used to retrieve parts of the basis file.
+ *
+ * \param opaque The opaque object to execute the callback with. Often the file
+ * to read from.
  *
  * \param pos Position where copying should begin.
  *
@@ -517,15 +565,22 @@ LIBRSYNC_EXPORT extern int rs_inbuflen, rs_outbuflen;
 
 /** Generate the signature of a basis file, and write it out to another.
  *
+ * It's recommended you use rs_sig_args() to get the recommended arguments for
+ * this based on the original file size.
+ *
  * \param old_file Stdio readable file whose signature will be generated.
  *
  * \param sig_file Writable stdio file to which the signature will be written./
  *
- * \param block_len block size for signature generation, in bytes
+ * \param block_len Checksum block size to use (0 for "recommended"). Larger
+ * values make the signature shorter, and the delta longer.
  *
- * \param strong_len truncated length of strong checksums, in bytes
+ * \param strong_len Strongsum length in bytes to use (0 for "maximum", -1 for
+ * "minimum"). Smaller values make the signature shorter but increase the risk
+ * of corruption from hash collisions.
  *
- * \param sig_magic A signature magic number indicating what format to use.
+ * \param sig_magic Signature file format to generate (0 for "recommended").
+ * See ::rs_magic_number.
  *
  * \param stats Optional pointer to receive statistics.
  *
@@ -565,4 +620,4 @@ LIBRSYNC_EXPORT rs_result rs_patch_file(FILE *basis_file, FILE *delta_file,
 }                               /* extern "C" */
 #  endif
 
-#endif                          /* !_RSYNC_H */
+#endif                          /* !LIBRSYNC_H */

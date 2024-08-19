@@ -29,12 +29,20 @@
 				     */
 
 /** \file prototab.h
- * Delta file commands. */
+ * Delta file commands.
+ *
+ * This file defines an array mapping command IDs to the operation kind,
+ * implied literal value, and length of the first and second parameters. The
+ * implied value is only used if the first parameter length is zero. */
+#ifndef PROTOTAB_H
+#  define PROTOTAB_H
+
+#  include "command.h"
 
 typedef struct rs_prototab_ent {
     enum rs_op_kind kind;
     int immediate;
-    size_t len_1, len_2;
+    int len_1, len_2;
 } rs_prototab_ent_t;
 
 extern const rs_prototab_ent_t rs_prototab[];
@@ -297,3 +305,5 @@ enum {
     RS_OP_RESERVED_254 = 0xfe,
     RS_OP_RESERVED_255 = 0xff
 };
+
+#endif                          /* !PROTOTAB_H */

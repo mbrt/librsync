@@ -20,26 +20,31 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#include "config.h"
-#include <assert.h>
+/* This provides a compatiblity layer for file operations on different
+   platforms. We need to tell IWYU to keep some headers because they are
+   required on some platforms but not others. */
+#include "config.h"             /* IWYU pragma: keep */
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #ifdef HAVE_UNISTD_H
-#  include <unistd.h>
+#  include <unistd.h>           /* IWYU pragma: keep */
 #endif
 #ifdef HAVE_FCNTL_H
-#  include <fcntl.h>
+#  include <fcntl.h>            /* IWYU pragma: keep */
 #endif
 #ifdef HAVE_SYS_TYPES_H
-#  include <sys/types.h>
+#  include <sys/types.h>        /* IWYU pragma: keep */
 #endif
 #ifdef HAVE_SYS_FILE_H
-#  include <sys/file.h>
+#  include <sys/file.h>         /* IWYU pragma: keep */
 #endif
 #ifdef HAVE_SYS_STAT_H
-#  include <sys/stat.h>
+#  include <sys/stat.h>         /* IWYU pragma: keep */
+#endif
+#ifdef HAVE_IO_H
+#  include <io.h>               /* IWYU pragma: keep */
 #endif
 #include "librsync.h"
 #include "trace.h"
@@ -68,8 +73,8 @@
 #  define S_ISREG(x) ((x) & _S_IFREG)
 #endif
 
-/* Use _fileno if it exists and fileno doesn't. */
-#if !defined(HAVE_FILENO) && defined(HAVE__FILENO)
+/* Use and prefer _fileno if it exists. */
+#ifdef HAVE__FILENO
 #  define fileno(f) _fileno((f))
 #endif
 
@@ -129,23 +134,20 @@ rs_long_t rs_file_size(FILE *f)
 
 rs_result rs_file_copy_cb(void *arg, rs_long_t pos, size_t *len, void **buf)
 {
-    int got;
     FILE *f = (FILE *)arg;
 
     if (fseek(f, pos, SEEK_SET)) {
         rs_error("seek failed: %s", strerror(errno));
         return RS_IO_ERROR;
     }
-
-    got = fread(*buf, 1, *len, f);
-    if (got == -1) {
+    *len = fread(*buf, 1, *len, f);
+    if (*len) {
+        return RS_DONE;
+    } else if (ferror(f)) {
         rs_error("read error: %s", strerror(errno));
         return RS_IO_ERROR;
-    } else if (got == 0) {
+    } else {
         rs_error("unexpected eof on fd%d", fileno(f));
         return RS_INPUT_ENDED;
-    } else {
-        *len = got;
-        return RS_DONE;
     }
 }

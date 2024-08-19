@@ -17,19 +17,22 @@
 
 
 project(librsync C)
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 3.6)
 
 INCLUDE(CMakeDependentOption)
 include(GNUInstallDirs)
 
 set(LIBRSYNC_MAJOR_VERSION 2)
-set(LIBRSYNC_MINOR_VERSION 2)
-set(LIBRSYNC_PATCH_VERSION 2)
+set(LIBRSYNC_MINOR_VERSION 3)
+set(LIBRSYNC_PATCH_VERSION 5)
 
 set(LIBRSYNC_VERSION
   ${LIBRSYNC_MAJOR_VERSION}.${LIBRSYNC_MINOR_VERSION}.${LIBRSYNC_PATCH_VERSION})
 
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# Turn on generating compile_commands.json for clang-tidy and iwyu.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if (NOT CMAKE_SYSTEM_PROCESSOR)
 	message(FATAL_ERROR "No target CPU architecture set")
@@ -39,10 +42,19 @@ if (NOT CMAKE_SYSTEM_NAME)
 	message(FATAL_ERROR "No target OS set")
 endif()
 
+# Set CMAKE_BUILD_TYPE if unset.
+include(BuildType)
+message (STATUS "CMAKE_BUILD_TYPE = ${CMAKE_BUILD_TYPE}")
+
 option(BUILD_SHARED_LIBS "Build librsync as a shared library." ON)
 
+# Option ENABLE_TRACE defaults to ON for Debug builds.
+if (CMAKE_BUILD_TYPE MATCHES Debug)
+  option(ENABLE_TRACE "Compile in detailed trace messages" ON)
+else ()
+  option(ENABLE_TRACE "Compile in detailed trace messages" OFF)
+endif()
 set(DO_RS_TRACE 0)
-option(ENABLE_TRACE "Compile in detailed trace messages" OFF)
 if (ENABLE_TRACE)
     set(DO_RS_TRACE 1)
 endif (ENABLE_TRACE)
@@ -61,6 +73,7 @@ check_include_files ( sys/file.h HAVE_SYS_FILE_H )
 check_include_files ( sys/stat.h HAVE_SYS_STAT_H )
 check_include_files ( sys/types.h HAVE_SYS_TYPES_H )
 check_include_files ( unistd.h HAVE_UNISTD_H )
+check_include_files ( io.h HAVE_IO_H )
 check_include_files ( fcntl.h HAVE_FCNTL_H )
 check_include_files ( mcheck.h HAVE_MCHECK_H )
 check_include_files ( zlib.h HAVE_ZLIB_H )
@@ -100,7 +113,7 @@ if(WIN32)
   # CheckCSourceRuns checking for "%zu" succeeds but still gives warnings on win32.
   set(HAVE_PRINTF_Z OFF)
   # Not using unsupported %zu generates warnings about using %I64 with MinGW.
-  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-format")
+  # set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-format")
   message (STATUS "Compiling to Win32 - printf \"%zu\" size_t formatting support disabled")
 elseif(CMAKE_CROSSCOMPILING)
   # CheckCSourceRuns doesn't work when cross-compiling; assume C99 compliant support.
@@ -133,9 +146,14 @@ if(APPLE)
 endif()
 
 if (CMAKE_C_COMPILER_ID MATCHES "(Clang|Gnu|GNU)")
-  # TODO: Set for MSVC and other compilers.
   # TODO: Set -Werror when the build is clean.
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -std=c99 -pedantic")
+  if (CMAKE_C_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-sign-conversion")
+  endif()
+elseif(CMAKE_C_COMPILER_ID MATCHES "MSVC")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /D_CRT_SECURE_NO_WARNINGS")
 endif()
 
 site_name(BUILD_HOSTNAME)
@@ -147,6 +165,8 @@ message (STATUS "CMAKE_SYSTEM = ${CMAKE_SYSTEM}")
 # Find POPT
 find_package(POPT)
 if (POPT_FOUND)
+  message (STATUS "POPT_INCLUDE_DIRS  = ${POPT_INCLUDE_DIRS}")
+  message (STATUS "POPT_LIBRARIES = ${POPT_LIBRARIES}")
   include_directories(${POPT_INCLUDE_DIRS})
 endif (POPT_FOUND)
 
@@ -158,25 +178,22 @@ cmake_dependent_option(BUILD_RDIFF "Whether or not to build rdiff executable" ON
 # Find BZIP
 find_package (BZip2)
 if (BZIP2_FOUND)
-  message (STATUS "Found components for BZIP2")
-  message (STATUS "BZIP2_INCLUDE_DIR  = ${BZIP2_INCLUDE_DIR}")
+  message (STATUS "BZIP2_INCLUDE_DIRS  = ${BZIP2_INCLUDE_DIRS}")
   message (STATUS "BZIP2_LIBRARIES = ${BZIP2_LIBRARIES}")
-  include_directories(${BZIP2_INCLUDE_DIR})
+  include_directories(${BZIP2_INCLUDE_DIRS})
 endif (BZIP2_FOUND)
 
 # Find ZLIB
 find_package (ZLIB)
 if (ZLIB_FOUND)
-  message (STATUS "Found components for ZLIB")
   message (STATUS "ZLIB_INCLUDE_DIRS  = ${ZLIB_INCLUDE_DIRS}")
   message (STATUS "ZLIB_LIBRARIES = ${ZLIB_LIBRARIES}")
   include_directories(${ZLIB_INCLUDE_DIRS})
 endif (ZLIB_FOUND)
 
 # Find libb2
-find_package(libb2)
+find_package(LIBB2)
 if (LIBB2_FOUND)
-  message (STATUS "Found components for libb2")
   message (STATUS "LIBB2_INCLUDE_DIRS  = ${LIBB2_INCLUDE_DIRS}")
   message (STATUS "LIBB2_LIBRARIES = ${LIBB2_LIBRARIES}")
 endif (LIBB2_FOUND)
@@ -201,7 +218,7 @@ if(DOXYGEN_FOUND)
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/doc/Doxyfile.in ${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile @ONLY)
     add_custom_target(doc
         ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/doc/Doxyfile
-        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         COMMENT "Generating API documentation with Doxygen" VERBATIM
     )
 endif(DOXYGEN_FOUND)
@@ -235,6 +252,28 @@ add_custom_target(tidyc
     VERBATIM
 )
 
+# clang-tidy target to check code for errors.
+add_custom_target(clang-tidy
+    COMMENT "Check code for errors using clang-tidy."
+    COMMAND run-clang-tidy -p ${CMAKE_CURRENT_BINARY_DIR}
+    VERBATIM
+)
+
+# iwyu target to check includes for correctness.
+# Note we ignore noisy "note:" output.
+add_custom_target(iwyu
+    COMMENT "Check #includes for correctness using iwyu_tool."
+    COMMAND ! iwyu_tool -p ${CMAKE_CURRENT_BINARY_DIR} -o clang | egrep -v "note:"
+    VERBATIM
+)
+
+# iwyu-fix target to fix includes for correctness.
+add_custom_target(iwyu-fix
+    COMMENT "Fix #includes for correctness using iwyu_tool and fix_include."
+    COMMAND iwyu_tool -p ${CMAKE_CURRENT_BINARY_DIR} | fix_include --noblank_lines
+    VERBATIM
+)
+
 # Testing
 
 add_executable(isprefix_test
@@ -243,7 +282,8 @@ add_test(NAME isprefix_test COMMAND isprefix_test)
 
 add_executable(netint_test
     tests/netint_test.c src/netint.c src/util.c src/trace.c src/tube.c
-    src/scoop.c src/stream.c)
+    src/scoop.c)
+target_compile_options(netint_test PRIVATE -DLIBRSYNC_STATIC_DEFINE)
 add_test(NAME netint_test COMMAND netint_test)
 
 add_executable(rollsum_test
@@ -251,40 +291,59 @@ add_executable(rollsum_test
 add_test(NAME rollsum_test COMMAND rollsum_test)
 
 add_executable(rabinkarp_test
-    tests/rabinkarp_test.c)
+    tests/rabinkarp_test.c src/rabinkarp.c)
 add_test(NAME rabinkarp_test COMMAND rabinkarp_test)
+add_executable(rabinkarp_perf
+    tests/rabinkarp_perf.c src/rabinkarp.c)
 
 add_executable(hashtable_test
     tests/hashtable_test.c src/hashtable.c)
 add_test(NAME hashtable_test COMMAND hashtable_test)
 
 add_executable(checksum_test
-    tests/checksum_test.c src/checksum.c src/rollsum.c src/mdfour.c ${blake2_SRCS})
+    tests/checksum_test.c src/checksum.c src/rollsum.c src/rabinkarp.c src/mdfour.c ${blake2_SRCS})
 target_compile_options(checksum_test PRIVATE -DLIBRSYNC_STATIC_DEFINE)
 target_link_libraries(checksum_test ${blake2_LIBS})
 add_test(NAME checksum_test COMMAND checksum_test)
 
 add_executable(sumset_test
     tests/sumset_test.c src/sumset.c src/util.c src/trace.c src/hex.c
-    src/checksum.c src/rollsum.c src/mdfour.c src/hashtable.c ${blake2_SRCS})
+    src/checksum.c src/rollsum.c src/rabinkarp.c src/mdfour.c src/hashtable.c ${blake2_SRCS})
 target_compile_options(sumset_test PRIVATE -DLIBRSYNC_STATIC_DEFINE)
 target_link_libraries(sumset_test ${blake2_LIBS})
 add_test(NAME sumset_test COMMAND sumset_test)
 
+# On Windows we need to explicitly execute bash for scripts.
+if (WIN32)
+    set(WIN_BASH bash -e)
+endif (WIN32)
+
 # Disable rdiff specific tests
 if (BUILD_RDIFF)
     add_test(NAME rdiff_bad_option
-             COMMAND rdiff_bad_option.sh ${CMAKE_CURRENT_BINARY_DIR}
-             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-
-    add_test(NAME Help COMMAND help.test ${CMAKE_CURRENT_BINARY_DIR} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-
-    add_test(NAME Mutate COMMAND mutate.test ${CMAKE_CURRENT_BINARY_DIR} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    add_test(NAME Signature COMMAND signature.test ${CMAKE_CURRENT_BINARY_DIR} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    add_test(NAME Sources COMMAND sources.test ${CMAKE_CURRENT_BINARY_DIR} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    add_test(NAME Triple COMMAND triple.test ${CMAKE_CURRENT_BINARY_DIR} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    add_test(NAME Delta COMMAND delta.test ${CMAKE_CURRENT_BINARY_DIR} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
-    add_test(NAME Changes COMMAND changes.test ${CMAKE_CURRENT_BINARY_DIR} WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+        COMMAND ${WIN_BASH} rdiff_bad_option.test $<TARGET_FILE:rdiff>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME Help
+        COMMAND ${WIN_BASH} help.test $<TARGET_FILE:rdiff>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME Mutate
+        COMMAND ${WIN_BASH} mutate.test $<TARGET_FILE:rdiff>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME Signature
+        COMMAND ${WIN_BASH} signature.test $<TARGET_FILE:rdiff>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME Sources
+        COMMAND ${WIN_BASH} sources.test $<TARGET_FILE:rdiff>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME Triple
+        COMMAND ${WIN_BASH} triple.test $<TARGET_FILE:rdiff>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME Delta
+        COMMAND ${WIN_BASH} delta.test $<TARGET_FILE:rdiff>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    add_test(NAME Changes
+        COMMAND ${WIN_BASH} changes.test $<TARGET_FILE:rdiff>
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests)
 endif (BUILD_RDIFF)
 
 
@@ -296,7 +355,7 @@ if (BUILD_RDIFF)
 else (BUILD_RDIFF)
   set(LAST_TARGET rsync)
 endif (BUILD_RDIFF)
-add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
+add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND} -C Debug)
 add_dependencies(check ${LAST_TARGET}
     isprefix_test
     netint_test
@@ -309,7 +368,7 @@ add_dependencies(check ${LAST_TARGET}
 enable_testing()
 
 # Create conf files
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/config.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/src/config.h)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/config.h.in ${CMAKE_CURRENT_BINARY_DIR}/src/config.h)
 
 # We need to be able to #include "file" from a few places,
 # * The original source dir
@@ -342,9 +401,9 @@ set(rsync_LIB_SRCS
     src/patch.c
     src/readsums.c
     src/rollsum.c
+    src/rabinkarp.c
     src/scoop.c
     src/stats.c
-    src/stream.c
     src/sumset.c
     src/trace.c
     src/tube.c
